@@ -11,7 +11,8 @@ import {
   Eye, 
   Layers,
   Search,
-  ExternalLink
+  ExternalLink,
+  ChevronDown
 } from 'lucide-react';
 
 // ============================================================================
@@ -386,6 +387,7 @@ export default function App() {
   const [customColors, setCustomColors] = useState(COLOR_DICTIONARY);
   const [newColorName, setNewColorName] = useState('');
   const [newColorHex, setNewColorHex] = useState('#ef4444');
+  const [openRelated, setOpenRelated] = useState({}); // 互補色 / 相近色折疊狀態 (預設全部收合)
 
   // 當輸入更新時的解析與防呆
   useEffect(() => {
@@ -945,25 +947,36 @@ export default function App() {
                 </p>
               </div>
 
-              {relatedPalettes.map((rel) => (
-                <div key={rel.key} className="space-y-2">
-                  <div className="flex flex-wrap items-center gap-3">
-                    <span
-                      className="w-6 h-6 rounded-lg border border-slate-700"
-                      style={{ backgroundColor: rel.hex }}
-                    />
-                    <span className="text-sm font-bold text-slate-100">{rel.label}</span>
-                    <span className="text-[11px] font-mono font-bold text-indigo-300 bg-indigo-950/40 border border-indigo-900/60 px-2 py-0.5 rounded">
-                      {rel.angleLabel}
-                    </span>
-                    <span className="text-xs font-mono text-slate-400">{rel.hex.toUpperCase()}</span>
-                    <span className="text-xs bg-slate-800 px-3 py-1 rounded-lg border border-slate-700/80 text-slate-300 font-medium">
-                      基準匹配：{rel.matchedName}
-                    </span>
+              {relatedPalettes.map((rel) => {
+                const isOpen = !!openRelated[rel.key];
+                return (
+                  <div key={rel.key} className="space-y-2">
+                    <button
+                      type="button"
+                      onClick={() => setOpenRelated((prev) => ({ ...prev, [rel.key]: !prev[rel.key] }))}
+                      aria-expanded={isOpen}
+                      className="w-full flex flex-wrap items-center gap-3 text-left rounded-xl px-3 py-2.5 bg-slate-950/40 border border-slate-800 hover:border-slate-600 transition-all focus:outline-none"
+                    >
+                      <span
+                        className="w-6 h-6 rounded-lg border border-slate-700"
+                        style={{ backgroundColor: rel.hex }}
+                      />
+                      <span className="text-sm font-bold text-slate-100">{rel.label}</span>
+                      <span className="text-[11px] font-mono font-bold text-indigo-300 bg-indigo-950/40 border border-indigo-900/60 px-2 py-0.5 rounded">
+                        {rel.angleLabel}
+                      </span>
+                      <span className="text-xs font-mono text-slate-400">{rel.hex.toUpperCase()}</span>
+                      <span className="text-xs bg-slate-800 px-3 py-1 rounded-lg border border-slate-700/80 text-slate-300 font-medium">
+                        基準匹配：{rel.matchedName}
+                      </span>
+                      <ChevronDown
+                        className={`w-4 h-4 text-slate-400 ml-auto transition-transform ${isOpen ? 'rotate-180' : ''}`}
+                      />
+                    </button>
+                    {isOpen && renderScaleGrid(rel.scales)}
                   </div>
-                  {renderScaleGrid(rel.scales)}
-                </div>
-              ))}
+                );
+              })}
             </div>
 
             {/* 區段 3: 專屬導出面板 (.css 與 tailwind.config.js 完美變數對應) */}
