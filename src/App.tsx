@@ -344,6 +344,37 @@ const generate11ScalePalette = (baseHex) => {
 };
 
 // ============================================================================
+// 4.5 互補色與相近色 (HSL 色相旋轉)
+// ============================================================================
+const hslToHex = (h, s, l) => {
+  const hue = ((h % 360) + 360) % 360;
+  const c = (1 - Math.abs(2 * l - 1)) * s;
+  const x = c * (1 - Math.abs((hue / 60) % 2 - 1));
+  const m = l - c / 2;
+  let r = 0, g = 0, b = 0;
+  if (hue < 60) { r = c; g = x; }
+  else if (hue < 120) { r = x; g = c; }
+  else if (hue < 180) { g = c; b = x; }
+  else if (hue < 240) { g = x; b = c; }
+  else if (hue < 300) { r = x; b = c; }
+  else { r = c; b = x; }
+  return rgbToHex((r + m) * 255, (g + m) * 255, (b + m) * 255);
+};
+
+// 保留原色的飽和度與明度，只旋轉色相
+const rotateHue = (hex, degrees) => {
+  const { r, g, b } = hexToRgb(hex);
+  const { h, s, l } = rgbToHsl(r, g, b);
+  return hslToHex(h + degrees, s, l);
+};
+
+const RELATED_HUES = [
+  { key: 'complement', suffix: 'complement', label: '互補色', angleLabel: '+180°', degrees: 180 },
+  { key: 'analogous-minus', suffix: 'analogous-minus', label: '相近色 A', angleLabel: '-30°', degrees: -30 },
+  { key: 'analogous-plus', suffix: 'analogous-plus', label: '相近色 B', angleLabel: '+30°', degrees: 30 }
+];
+
+// ============================================================================
 // 5. App 主組件
 // ============================================================================
 export default function App() {
@@ -477,13 +508,39 @@ export default function App() {
     return getKebabCaseName(closestColor.name);
   }, [closestColor]);
 
-  // 建立導出程式碼
+  // 互補色 / 相近色：各自展開完整 11 色階
+  const relatedPalettes = useMemo(() => {
+    return RELATED_HUES.map((rel) => {
+      const hex = rotateHue(selectedHex, rel.degrees);
+      return {
+        ...rel,
+        hex,
+        matchedName: findClosestColorName(hex).name,
+        scales: generate11ScalePalette(hex)
+      };
+    });
+  }, [selectedHex]);
+
+  // 建立導出程式碼 (主色 + 互補色 + 相近色)
   const codeOutput = useMemo(() => {
+    const groups = [
+      { name: cleanKebabName, comment: `主色 ${closestColor.name}`, scales: colorScales },
+      ...relatedPalettes.map((rel) => ({
+        name: `${cleanKebabName}-${rel.suffix}`,
+        comment: `${rel.label} ${rel.angleLabel} ${rel.matchedName}`,
+        scales: rel.scales
+      }))
+    ];
+
     if (exportMode === 'css') {
       let cssText = `/* Chromatica 產生的 CSS 自訂屬性 - [${closestColor.name}] */\n`;
       cssText += `:root {\n`;
-      colorScales.forEach((scale) => {
-        cssText += `  --color-${cleanKebabName}-${scale.weight}: ${scale.hex};\n`;
+      groups.forEach((group, index) => {
+        if (index > 0) cssText += `\n`;
+        cssText += `  /* ${group.comment} */\n`;
+        group.scales.forEach((scale) => {
+          cssText += `  --color-${group.name}-${scale.weight}: ${scale.hex};\n`;
+        });
       });
       cssText += `}`;
       return cssText;
@@ -493,18 +550,84 @@ export default function App() {
       twText += `  theme: {\n`;
       twText += `    extend: {\n`;
       twText += `      colors: {\n`;
-      twText += `        '${cleanKebabName}': {\n`;
-      colorScales.forEach((scale) => {
-        twText += `          '${scale.weight}': '${scale.hex}',\n`;
+      groups.forEach((group) => {
+        twText += `        // ${group.comment}\n`;
+        twText += `        '${group.name}': {\n`;
+        group.scales.forEach((scale) => {
+          twText += `          '${scale.weight}': '${scale.hex}',\n`;
+        });
+        twText += `        },\n`;
       });
-      twText += `        },\n`;
       twText += `      },\n`;
       twText += `    },\n`;
       twText += `  },\n`;
       twText += `};`;
       return twText;
     }
-  }, [exportMode, colorScales, cleanKebabName, closestColor]);
+  }, [exportMode, colorScales, relatedPalettes, cleanKebabName, closestColor]);
+
+  // 色階方塊網格 (主色與衍生色共用)
+  const renderScaleGrid = (scales) => (
+    <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-11 gap-3 pt-2">
+      {scales.map((scale) => {
+        const isSource = scale.weight === 500;
+        return (
+          <button
+            key={scale.weight}
+            onClick={() => {
+              copyToClipboard(scale.hex, `${scale.weight}色階碼`);
+              triggerToast(`📋 已複製 ${scale.zhName}: ${scale.hex.toUpperCase()}`);
+            }}
+            className="group/scale rounded-xl p-3 flex flex-col justify-between min-h-[155px] text-left relative overflow-hidden transition-all duration-300 border border-transparent hover:-translate-y-2 hover:shadow-2xl hover:border-slate-600 focus:outline-none"
+            style={{ backgroundColor: scale.hex }}
+          >
+            {/* 水光層 */}
+            <div className="absolute inset-0 bg-gradient-to-tr from-white/5 to-transparent opacity-0 group-hover/scale:opacity-100 transition-opacity" />
+
+            {/* 頂部：色階權重與來源標籤 */}
+            <div className="flex justify-between items-start z-10 w-full">
+              <span className={`text-[11px] font-mono font-bold tracking-wider px-1.5 py-0.5 rounded ${
+                scale.isDarkBackground ? 'bg-white/10 text-slate-300' : 'bg-black/5 text-slate-800'
+              }`}>
+                {scale.weight}
+              </span>
+              {isSource && (
+                <span className="bg-rose-500 text-[9px] text-white font-extrabold px-1.5 py-0.5 rounded-full shadow-lg border border-rose-300/20 uppercase tracking-widest animate-pulse">
+                  SRC
+                </span>
+              )}
+            </div>
+
+            {/* 中間：智慧命名 */}
+            <div className="z-10 mt-auto pt-4">
+              <p className={`text-xs font-black tracking-tight leading-tight ${
+                scale.isDarkBackground ? 'text-white' : 'text-slate-900'
+              }`}>
+                {scale.zhName}
+              </p>
+              <p className={`text-[9px] font-semibold opacity-60 truncate ${
+                scale.isDarkBackground ? 'text-slate-400' : 'text-slate-700'
+              }`}>
+                {scale.enName || 'Base'}
+              </p>
+            </div>
+
+            {/* 底部：HEX 碼與複製圖標 */}
+            <div className="z-10 flex justify-between items-center pt-2 mt-2 border-t border-black/5">
+              <span className={`text-[10px] font-mono font-bold ${
+                scale.isDarkBackground ? 'text-slate-300' : 'text-slate-800'
+              }`}>
+                {scale.hex.toUpperCase()}
+              </span>
+              <Copy className={`w-3 h-3 opacity-0 group-hover/scale:opacity-100 transition-opacity ${
+                scale.isDarkBackground ? 'text-slate-300' : 'text-slate-800'
+              }`} />
+            </div>
+          </button>
+        );
+      })}
+    </div>
+  );
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-teal-500 selection:text-slate-950">
@@ -807,65 +930,40 @@ export default function App() {
               </div>
 
               {/* 色彩階梯大區塊 */}
-              <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-11 gap-3 pt-2">
-                {colorScales.map((scale) => {
-                  const isSource = scale.weight === 500;
-                  return (
-                    <button
-                      key={scale.weight}
-                      onClick={() => {
-                        copyToClipboard(scale.hex, `${scale.weight}色階碼`);
-                        triggerToast(`📋 已複製 ${scale.zhName}: ${scale.hex.toUpperCase()}`);
-                      }}
-                      className="group/scale rounded-xl p-3 flex flex-col justify-between min-h-[155px] text-left relative overflow-hidden transition-all duration-300 border border-transparent hover:-translate-y-2 hover:shadow-2xl hover:border-slate-600 focus:outline-none"
-                      style={{ backgroundColor: scale.hex }}
-                    >
-                      {/* 水光層 */}
-                      <div className="absolute inset-0 bg-gradient-to-tr from-white/5 to-transparent opacity-0 group-hover/scale:opacity-100 transition-opacity" />
-                      
-                      {/* 頂部：色階權重與來源標籤 */}
-                      <div className="flex justify-between items-start z-10 w-full">
-                        <span className={`text-[11px] font-mono font-bold tracking-wider px-1.5 py-0.5 rounded ${
-                          scale.isDarkBackground ? 'bg-white/10 text-slate-300' : 'bg-black/5 text-slate-800'
-                        }`}>
-                          {scale.weight}
-                        </span>
-                        {isSource && (
-                          <span className="bg-rose-500 text-[9px] text-white font-extrabold px-1.5 py-0.5 rounded-full shadow-lg border border-rose-300/20 uppercase tracking-widest animate-pulse">
-                            SRC
-                          </span>
-                        )}
-                      </div>
+              {renderScaleGrid(colorScales)}
+            </div>
 
-                      {/* 中間：智慧命名 */}
-                      <div className="z-10 mt-auto pt-4">
-                        <p className={`text-xs font-black tracking-tight leading-tight ${
-                          scale.isDarkBackground ? 'text-white' : 'text-slate-900'
-                        }`}>
-                          {scale.zhName}
-                        </p>
-                        <p className={`text-[9px] font-semibold opacity-60 truncate ${
-                          scale.isDarkBackground ? 'text-slate-400' : 'text-slate-700'
-                        }`}>
-                          {scale.enName || 'Base'}
-                        </p>
-                      </div>
-
-                      {/* 底部：HEX 碼與複製圖標 */}
-                      <div className="z-10 flex justify-between items-center pt-2 mt-2 border-t border-black/5">
-                        <span className={`text-[10px] font-mono font-bold ${
-                          scale.isDarkBackground ? 'text-slate-300' : 'text-slate-800'
-                        }`}>
-                          {scale.hex.toUpperCase()}
-                        </span>
-                        <Copy className={`w-3 h-3 opacity-0 group-hover/scale:opacity-100 transition-opacity ${
-                          scale.isDarkBackground ? 'text-slate-300' : 'text-slate-800'
-                        }`} />
-                      </div>
-                    </button>
-                  );
-                })}
+            {/* 區段 2.5: 互補色與相近色 (各自完整 11 色階) */}
+            <div className="bg-slate-900/80 rounded-2xl border border-slate-800 p-6 shadow-xl space-y-6">
+              <div>
+                <h2 className="text-lg font-bold flex items-center gap-2 text-slate-100">
+                  <Palette className="w-5 h-5 text-indigo-400" />
+                  互補色與相近色
+                </h2>
+                <p className="text-xs text-slate-400 mt-1">
+                  以 SRC 基準色為準，保留飽和度與明度，只旋轉 HSL 色相：互補色 +180°、相近色 ±30°
+                </p>
               </div>
+
+              {relatedPalettes.map((rel) => (
+                <div key={rel.key} className="space-y-2">
+                  <div className="flex flex-wrap items-center gap-3">
+                    <span
+                      className="w-6 h-6 rounded-lg border border-slate-700"
+                      style={{ backgroundColor: rel.hex }}
+                    />
+                    <span className="text-sm font-bold text-slate-100">{rel.label}</span>
+                    <span className="text-[11px] font-mono font-bold text-indigo-300 bg-indigo-950/40 border border-indigo-900/60 px-2 py-0.5 rounded">
+                      {rel.angleLabel}
+                    </span>
+                    <span className="text-xs font-mono text-slate-400">{rel.hex.toUpperCase()}</span>
+                    <span className="text-xs bg-slate-800 px-3 py-1 rounded-lg border border-slate-700/80 text-slate-300 font-medium">
+                      基準匹配：{rel.matchedName}
+                    </span>
+                  </div>
+                  {renderScaleGrid(rel.scales)}
+                </div>
+              ))}
             </div>
 
             {/* 區段 3: 專屬導出面板 (.css 與 tailwind.config.js 完美變數對應) */}
@@ -894,7 +992,7 @@ export default function App() {
                   </div>
                   <div className="flex justify-between text-xs py-1.5">
                     <span className="text-slate-500">生成色階數</span>
-                    <span className="text-emerald-400 font-mono font-bold">11 個定義階</span>
+                    <span className="text-emerald-400 font-mono font-bold">11 個定義階 × 4 組色相</span>
                   </div>
                 </div>
 
