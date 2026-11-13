@@ -376,6 +376,55 @@ const RELATED_HUES = [
 ];
 
 // ============================================================================
+// 4.6 配對色 (指定 WCAG 對比度，同色相自動找出深／淺對應色)
+// ============================================================================
+// WCAG 2.x 相對亮度
+const getRelativeLuminance = (hex) => {
+  const { r, g, b } = hexToRgb(hex);
+  const channel = (v) => {
+    const c = v / 255;
+    return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+  };
+  return 0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b);
+};
+
+// WCAG 對比度 (1 ~ 21)
+const getContrastRatio = (hexA, hexB) => {
+  const a = getRelativeLuminance(hexA);
+  const b = getRelativeLuminance(hexB);
+  return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+};
+
+// 保留色相與飽和度，從原明度出發往「較遠的一端」逐步移動，
+// 第一個達到目標對比度的明度就是配對色 (亦即最接近原色、剛好達標的一個)。
+// 淺色 -> 往深走；深色 -> 往淺走 (以相對亮度 0.179 為分界，即黑白對比相等的交界)。
+const getPairedColor = (baseHex, minRatio) => {
+  const { r, g, b } = hexToRgb(baseHex);
+  const { h, s, l } = rgbToHsl(r, g, b);
+  const goDarker = getRelativeLuminance(baseHex) > 0.179;
+  const step = goDarker ? -0.002 : 0.002;
+
+  let current = l;
+  let best = baseHex;
+  for (let i = 0; i < 500; i++) {
+    current += step;
+    if (current < 0 || current > 1) break;
+    best = hslToHex(h, s, current);
+    if (getContrastRatio(baseHex, best) >= minRatio) {
+      return { hex: best, ratio: getContrastRatio(baseHex, best), reached: true, goDarker };
+    }
+  }
+  return { hex: best, ratio: getContrastRatio(baseHex, best), reached: false, goDarker };
+};
+
+const CONTRAST_PRESETS = [
+  { value: 2.4, label: '2.4 視覺柔和' },
+  { value: 3, label: '3.0 AA 大字' },
+  { value: 4.5, label: '4.5 AA 一般' },
+  { value: 7, label: '7.0 AAA' }
+];
+
+// ============================================================================
 // 5. App 主組件
 // ============================================================================
 export default function App() {
@@ -388,6 +437,7 @@ export default function App() {
   const [newColorName, setNewColorName] = useState('');
   const [newColorHex, setNewColorHex] = useState('#ef4444');
   const [openRelated, setOpenRelated] = useState({}); // 互補色 / 相近色折疊狀態 (預設全部收合)
+  const [minContrast, setMinContrast] = useState(2.4); // 配對色目標對比度
 
   // 當輸入更新時的解析與防呆
   useEffect(() => {
@@ -522,6 +572,9 @@ export default function App() {
       };
     });
   }, [selectedHex]);
+
+  // 配對色：同色相，依目標對比度自動找出深／淺對應色
+  const pairedColor = useMemo(() => getPairedColor(selectedHex, minContrast), [selectedHex, minContrast]);
 
   // 建立導出程式碼 (主色 + 互補色 + 相近色)
   const codeOutput = useMemo(() => {
@@ -977,6 +1030,106 @@ export default function App() {
                   </div>
                 );
               })}
+            </div>
+
+            {/* 區段 2.6: 配對色 (指定對比度，淺色對應深色／深色對應淺色) */}
+            <div className="bg-slate-900/80 rounded-2xl border border-slate-800 p-6 shadow-xl space-y-5">
+              <div>
+                <h2 className="text-lg font-bold flex items-center gap-2 text-slate-100">
+                  <Eye className="w-5 h-5 text-teal-400" />
+                  配對色 (指定對比度)
+                </h2>
+                <p className="text-xs text-slate-400 mt-1">
+                  保留 SRC 的色相與飽和度，只調整明度，找出第一個達到目標對比度的顏色。淺色自動對應深色，深色自動對應淺色。
+                </p>
+              </div>
+
+              {/* 目標對比度 */}
+              <div className="flex flex-wrap items-center gap-3">
+                <span className="text-xs font-bold text-slate-400">目標對比度</span>
+                <div className="flex p-1 bg-slate-950 rounded-lg border border-slate-800">
+                  {CONTRAST_PRESETS.map((preset) => (
+                    <button
+                      key={preset.value}
+                      type="button"
+                      onClick={() => setMinContrast(preset.value)}
+                      className={`px-3 py-1 text-xs font-bold rounded-md transition-all ${
+                        minContrast === preset.value
+                          ? 'bg-gradient-to-r from-teal-500 to-emerald-500 text-slate-950 shadow'
+                          : 'text-slate-400 hover:text-slate-200'
+                      }`}
+                    >
+                      {preset.label}
+                    </button>
+                  ))}
+                </div>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="number"
+                    min="1.1"
+                    max="21"
+                    step="0.1"
+                    value={minContrast}
+                    onChange={(e) => {
+                      const v = parseFloat(e.target.value);
+                      if (!Number.isNaN(v)) setMinContrast(Math.min(21, Math.max(1.1, v)));
+                    }}
+                    className="w-20 bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs font-mono focus:outline-none focus:border-teal-500 text-slate-200"
+                  />
+                  <span className="text-xs text-slate-500">: 1</span>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                {/* 預覽 */}
+                <div
+                  className="lg:col-span-5 rounded-2xl p-6 flex flex-col items-center justify-center gap-3 min-h-[140px] border border-slate-700"
+                  style={{ backgroundColor: selectedHex }}
+                >
+                  <span className="text-2xl font-black" style={{ color: pairedColor.hex }}>審核中</span>
+                  <span className="text-xs font-semibold" style={{ color: pairedColor.hex }}>Reviewing</span>
+                </div>
+
+                {/* 數值與可複製 class */}
+                <div className="lg:col-span-7 space-y-3">
+                  <div className="bg-slate-950 p-4 rounded-xl ring-1 ring-inset ring-white/5 space-y-3">
+                    <div className="flex justify-between text-xs py-1.5 shadow-[inset_0_-1px_0_0_rgba(255,255,255,0.05)]">
+                      <span className="text-slate-500">原色 (背景)</span>
+                      <span className="text-slate-300 font-mono font-bold">{selectedHex.toUpperCase()}</span>
+                    </div>
+                    <div className="flex justify-between text-xs py-1.5 shadow-[inset_0_-1px_0_0_rgba(255,255,255,0.05)]">
+                      <span className="text-slate-500">配對色 ({pairedColor.goDarker ? '深色' : '淺色'})</span>
+                      <span className="text-emerald-400 font-mono font-bold">{pairedColor.hex.toUpperCase()}</span>
+                    </div>
+                    <div className="flex justify-between text-xs py-1.5">
+                      <span className="text-slate-500">實際對比度</span>
+                      <span className="text-indigo-300 font-mono font-bold">
+                        {pairedColor.ratio.toFixed(2)} : 1
+                        {pairedColor.ratio >= 7 ? '  (AAA)' : pairedColor.ratio >= 4.5 ? '  (AA)' : pairedColor.ratio >= 3 ? '  (AA 大字)' : '  (低於 WCAG AA)'}
+                      </span>
+                    </div>
+                  </div>
+
+                  {!pairedColor.reached && (
+                    <p className="text-[11px] text-rose-300">
+                      此色相在同飽和度下，已調到最深／最淺仍達不到目標對比度，顯示的是能到達的極限值。
+                    </p>
+                  )}
+
+                  <div className="relative">
+                    <pre className="bg-slate-950 p-4 rounded-xl text-xs font-mono text-emerald-400 overflow-x-auto border border-slate-900">
+                      {`bg-[${selectedHex.toUpperCase()}] text-[${pairedColor.hex.toUpperCase()}]`}
+                    </pre>
+                    <button
+                      onClick={() => copyToClipboard(`bg-[${selectedHex.toUpperCase()}] text-[${pairedColor.hex.toUpperCase()}]`, 'Tailwind class')}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-650 px-3 py-1.5 rounded-lg text-xs font-bold shadow-md flex items-center gap-1.5 transition-all active:scale-95"
+                    >
+                      <Copy className="w-3.5 h-3.5" />
+                      複製
+                    </button>
+                  </div>
+                </div>
+              </div>
             </div>
 
             {/* 區段 3: 專屬導出面板 (.css 與 tailwind.config.js 完美變數對應) */}
